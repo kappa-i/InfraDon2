@@ -10,7 +10,6 @@ declare interface Post {
   comments?: Comment[];
 }
 
-// DATA - MODEL
 const storage = ref();
 const postsData = ref<Post[]>([])
 
@@ -25,7 +24,18 @@ const initDatabase = () => {
   }
 }
 
-// Ajouter un document avec données par défaut
+const fetchData = (): any => {
+  storage.value
+    .allDocs({ include_docs: true })
+    .then((result: any) => {
+      console.log('=> Données récupérées :', result.rows)
+      postsData.value = result.rows.map((row: any) => row.doc);
+    })
+    .catch((error: any) => {
+      console.error('=> Erreur lors de la récupération des données :', error)
+    })
+};
+
 const addPost = () => {
   const newPost: Post = {
     post_name: 'Chillout',
@@ -37,27 +47,32 @@ const addPost = () => {
     .post(newPost)
     .then((response: any) => {
       console.log('Document ajouté :', response);
-      
-      // Recharger les données
+
       fetchData();
     })
-    .catch((error: any) => {
-      console.error('Erreur lors de l\'ajout du document :', error);
-      alert('Erreur : ' + error.message);
-    });
+
 };
 
-// Récupération des données
-const fetchData = (): any => {
+const deletePost = (post: Post) => {
   storage.value
-    .allDocs({ include_docs: true })
-    .then((result: any) => {
-      console.log('=> Données récupérées :', result.rows)
-      postsData.value = result.rows.map((row: any) => row.doc);
+    .remove(post)
+    .then(() => {
+      fetchData();
     })
-    .catch((error: any) => {
-      console.error('=> Erreur lors de la récupération des données :', error)
+};
+
+const updatePost = (post: Post) => {
+  storage.value
+    .get(post._id)
+    .then((doc: any) => {
+      doc.post_name = "Modifié !";  
+      doc.post_content = new Date().toISOString();
+      return storage.value.put(doc);
     })
+    .then(() => {
+      fetchData();
+    })
+
 };
 
 onMounted(() => {
@@ -71,9 +86,9 @@ onMounted(() => {
 <template>
   <div>
     <h1>Fetch Data</h1>
-    
+
     <!-- Bouton pour ajouter un post -->
-    <button @click="addPost" style="padding: 10px 20px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; margin-bottom: 30px;">
+    <button @click="addPost">
       Ajouter un post
     </button>
 
@@ -82,6 +97,12 @@ onMounted(() => {
     <article v-for="post in postsData" :key="post._id">
       <h3>{{ post.post_name }}</h3>
       <p>{{ post.post_content }}</p>
+      <button @click="deletePost(post)">
+        Supprimer ce post
+      </button>
+      <button @click="updatePost(post)">
+        Modifier ce post
+      </button>
     </article>
     <p v-if="postsData.length === 0">Aucune donnée trouvée</p>
   </div>
