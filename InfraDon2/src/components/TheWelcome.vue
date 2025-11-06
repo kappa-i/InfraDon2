@@ -14,15 +14,34 @@ const storage = ref();
 const postsData = ref<Post[]>([])
 
 const initDatabase = () => {
-  console.log('=> Connexion à la base de données');
-  const db = new PouchDB('http://admin:root@localhost:5984/dbinfradon2gab')
+  const db = new PouchDB("Posts");
+
   if (db) {
-    console.log("Connected to collection : " + db?.name)
-    storage.value = db
+    console.log("db is initialized");
+    storage.value = db;
+
+    db.replicate.from("http://admin:root@localhost:5984/dbinfradon2gab").then(() => {
+      fetchData();
+    }).catch((err) => {
+      console.log("error replicating db", err);
+    });
   } else {
-    console.warn('Something went wrong')
+    console.log("db is not initialized");
   }
 }
+
+const syncWithServer = () => {
+  const remoteDB = new PouchDB('http://admin:root@localhost:5984/dbinfradon2gab');
+
+  storage.value
+    .replicate.from(remoteDB)
+    .then(() => {
+      return storage.value.replicate.to(remoteDB); 
+    })
+    .then(() => {
+      fetchData();
+    });
+};
 
 const fetchData = (): any => {
   storage.value
@@ -65,7 +84,7 @@ const updatePost = (post: Post) => {
   storage.value
     .get(post._id)
     .then((doc: any) => {
-      doc.post_name = "Modifié !";  
+      doc.post_name = "Modifié !";
       doc.post_content = new Date().toISOString();
       return storage.value.put(doc);
     })
@@ -90,6 +109,10 @@ onMounted(() => {
     <!-- Bouton pour ajouter un post -->
     <button @click="addPost">
       Ajouter un post
+    </button>
+
+    <button @click="syncWithServer">
+      Synchroniser avec le serveur
     </button>
 
     <!-- Affichage des posts -->
