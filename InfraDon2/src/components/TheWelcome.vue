@@ -1,188 +1,245 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import PouchDB from 'pouchdb';
-import PouchDBFind from 'pouchdb-find'; 
+import PouchDBFind from 'pouchdb-find';
 
 PouchDB.plugin(PouchDBFind);
 
-declare interface Comment {
+interface Comment {
   _id?: string;
+  _rev?: string;
+  post_id: string;
   text: string;
+  created_at: string;
 }
 
-declare interface Post {
+interface Post {
   _id?: string;
   _rev?: string;
   post_name: string;
   post_content: string;
   likes: number;
-  comments?: Comment[];
 }
 
-const storage = ref();
+const postsDB = ref();
+const commentsDB = ref();
 const postsData = ref<Post[]>([]);
+const commentsData = ref<{ [key: string]: Comment[] }>({});
 const isOffline = ref(false);
 const searchQuery = ref("");
-const syncHandler = ref<any>(null);
+
+const postsSyncHandler = ref<any>(null);
+const commentsSyncHandler = ref<any>(null);
+
+const remotePostsDB = ref<any>(null);
+const remoteCommentsDB = ref<any>(null);
+
+const REMOTE_POSTS = "http://admin:root@localhost:5984/dbinfradon2gab_posts";
+const REMOTE_COMMENTS = "http://admin:root@localhost:5984/dbinfradon2gab_comments";
+
+const initRemoteDBs = () => {
+  if (!remotePostsDB.value) {
+    remotePostsDB.value = new PouchDB(REMOTE_POSTS);
+  }
+  if (!remoteCommentsDB.value) {
+    remoteCommentsDB.value = new PouchDB(REMOTE_COMMENTS);
+  }
+};
 
 const toggleOffline = () => {
   isOffline.value = !isOffline.value;
 
   if (isOffline.value) {
-    console.log("Mode OFFLINE activé");
+    
+    postsSyncHandler.value?.cancel();
+    commentsSyncHandler.value?.cancel();
 
-    if (syncHandler.value) {
-      syncHandler.value.cancel();
-      syncHandler.value = null;
-    }
+    postsSyncHandler.value = null;
+    commentsSyncHandler.value = null;
+
+    console.log("🔴 OFFLINE : Synchronisation coupée");
   } else {
-    console.log("Mode ONLINE activé");
-    startContinuousSync();  
+    console.log("🟢 ONLINE : Tentative de reconnexion...");
+    initRemoteDBs(); 
+    syncToServer();
   }
 };
 
+const syncToServer = async () => {
 
-const initDatabase = () => {
-  const db = new PouchDB("Posts");
-  if (db) {
-    storage.value = db;
-    
-    db.createIndex({
-      index: { fields: ['likes', 'post_name'] }
-    }).then(() => console.log("Index créé"));
-
-    db.replicate.from("http://admin:root@localhost:5984/dbinfradon2gab").then(() => {
-      fetchData();
-      startContinuousSync();
-    }).catch((err) => console.log(err));
-  }
-}
-
-const startContinuousSync = () => {
-
-  if (isOffline.value) {
-    console.log("Sync annulée (offline)");
+  if (isOffline.value || !remotePostsDB.value || !remoteCommentsDB.value) {
+    console.warn("Impossible de synchroniser : mode offline ou bases distantes manquantes");
     return;
   }
 
-  const remoteDB = new PouchDB('http://admin:root@localhost:5984/dbinfradon2gab');
-
-  if (syncHandler.value) {
-    syncHandler.value.cancel();
+  try {
+    console.log("⏳ Synchronisation ponctuelle en cours...");
+    
+    await postsDB.value.replicate.to(remotePostsDB.value);
+    await commentsDB.value.replicate.to(remoteCommentsDB.value);
+    
+    await postsDB.value.replicate.from(remotePostsDB.value);
+    await commentsDB.value.replicate.from(remoteCommentsDB.value);
+    
+    console.log("✅ Synchronisation ponctuelle terminée");
+    
+    startContinuousSync();
+    
+    fetchData();
+  } catch (err) {
+    console.error("❌ Erreur de synchronisation:", err);
   }
-
-  syncHandler.value = storage.value.sync(remoteDB, {
-    live: true,
-    retry: true
-  })
 };
 
+const startContinuousSync = () => {
+  if (isOffline.value) return;
 
-const runFactory = async () => {
-  const dummyPosts = [];
-  for (let i = 0; i < 10; i++) {
-    dummyPosts.push({
-      post_name: `Post Factory ${i}`,
-      post_content: `Contenu généré ${Math.random()}`,
-      likes: Math.floor(Math.random() * 100),
-      comments: []
-    });
+  postsSyncHandler.value?.cancel();
+  commentsSyncHandler.value?.cancel();
+
+  postsSyncHandler.value = postsDB.value.sync(remotePostsDB.value, {
+    live: true,
+    retry: true
+  }).on('change', () => {
+
+    fetchData(); 
+  }).on('error', (err: any) => {
+      console.error("Erreur Sync Live:", err);
+  });
+
+  commentsSyncHandler.value = commentsDB.value.sync(remoteCommentsDB.value, {
+    live: true,
+    retry: true
+  }).on('change', () => {
+      fetchComments();
+  });
+  
+};
+
+const initDatabase = async () => {
+  postsDB.value = new PouchDB("Posts");
+  commentsDB.value = new PouchDB("Comments");
+
+  await postsDB.value.createIndex({ index: { fields: ['likes'] } });
+  await commentsDB.value.createIndex({
+    index: { fields: ['post_id', 'created_at'] }
+  });
+
+  if (!isOffline.value) {
+    initRemoteDBs();
+    startContinuousSync(); 
   }
-  await storage.value.bulkDocs(dummyPosts);
+
   fetchData();
 };
 
-const searchAndSort = () => {
-  const selector: any = { likes: { $gte: 0 } };
-  
-  if (searchQuery.value) {
-    storage.value.allDocs({ include_docs: true }).then((result: any) => {
-      let filtered = result.rows.map((row: any) => row.doc);
-      filtered = filtered.filter((doc: Post) => 
-        doc.post_name && doc.post_name.toLowerCase().includes(searchQuery.value.toLowerCase())
-      );
-      filtered.sort((a: Post, b: Post) => (b.likes || 0) - (a.likes || 0));
-      postsData.value = filtered;
-    });
-  } else {
-    storage.value.find({
-      selector: selector,
-      sort: [{ 'likes': 'desc' }] 
-    }).then((result: any) => {
-      postsData.value = result.docs;
-    }).catch((err: any) => console.error(err));
-  }
+const runFactory = async () => {
+  const dummyPosts = Array.from({ length: 10 }, (_, i) => ({
+    post_name: `Post Factory ${i}`,
+    post_content: `Contenu généré ${Math.random()}`,
+    likes: Math.floor(Math.random() * 100)
+  }));
+  await postsDB.value.bulkDocs(dummyPosts);
+  fetchData();
 };
 
-const addPost = () => {
-  const newPost: Post = {
+const searchAndSort = async () => {
+  if (!searchQuery.value) {
+    fetchPosts();
+    return;
+  }
+  const result = await postsDB.value.allDocs({ include_docs: true });
+  postsData.value = result.rows
+    .map((row: any) => row.doc)
+    .filter((doc: Post) => doc.post_name?.toLowerCase().includes(searchQuery.value.toLowerCase()))
+    .sort((a: Post, b: Post) => b.likes - a.likes);
+  fetchComments();
+};
+
+const addPost = async () => {
+  await postsDB.value.post({
     post_name: 'Chillout',
     post_content: 'Je suis un gars trop chill',
-    likes: 0,
-    comments: []
-  };
-  storage.value.post(newPost).then(() => fetchData());
+    likes: 0
+  });
+  fetchData();
 };
 
-const deletePost = (post: Post) => {
-  storage.value.remove(post).then(() => fetchData());
+const deletePost = async (post: Post) => {
+  await postsDB.value.remove(post);
+  const comments = await commentsDB.value.find({ selector: { post_id: post._id } });
+  const deleteDocs = comments.docs.map((doc: any) => ({ ...doc, _deleted: true }));
+  await commentsDB.value.bulkDocs(deleteDocs);
+  fetchData();
 };
 
-const updatePost = (post: Post) => {
-  storage.value.get(post._id).then((doc: any) => {
-    doc.post_name = "Modifié !";
-    doc.post_content = new Date().toISOString();
-    return storage.value.put(doc);
-  }).then(() => fetchData());
+const updatePost = async (post: Post) => {
+  const doc = await postsDB.value.get(post._id);
+  doc.post_name = "Modifié !";
+  doc.post_content = new Date().toISOString();
+  await postsDB.value.put(doc);
+  fetchData();
 };
 
-const likePost = (post: Post) => {
-  storage.value.get(post._id).then((doc: any) => {
-    doc.likes = (doc.likes || 0) + 1;
-    return storage.value.put(doc);
-  }).then(() => fetchData());
+const likePost = async (post: Post) => {
+  const doc = await postsDB.value.get(post._id);
+  doc.likes = (doc.likes || 0) + 1;
+  await postsDB.value.put(doc);
+  fetchData();
 };
 
-const sortByLikes = () => {
-  postsData.value.sort((a, b) => (b.likes || 0) - (a.likes || 0));
+const sortByLikes = async () => {
+  const result = await postsDB.value.find({
+    selector: { likes: { $gte: 0 } },
+    sort: [{ 'likes': 'desc' }]
+  });
+  postsData.value = result.docs;
 };
 
+const addComment = async (post: Post) => {
+  await commentsDB.value.post({
+    post_id: post._id!,
+    text: `Commentaire ${(Math.random()*1000).toFixed()}`,
+    created_at: new Date().toISOString()
+  });
+  fetchComments();
+};
 
-const addComment = (post: Post) => {
-  storage.value.get(post._id).then((doc: any) => {
-    if (!doc.comments) {
-      doc.comments = [];
+const deleteComment = async (comment: Comment) => {
+  await commentsDB.value.remove(comment);
+  fetchComments();
+};
+
+const fetchPosts = async () => {
+  const result = await postsDB.value.find({
+    selector: { likes: { $gte: 0 } },
+    sort: [{ 'likes': 'desc' }]
+  });
+  postsData.value = result.docs;
+};
+
+const fetchComments = async () => {
+  const result = await commentsDB.value.allDocs({ include_docs: true });
+  commentsData.value = result.rows.reduce((acc: any, row: any) => {
+    const comment = row.doc as Comment;
+    if (comment.post_id) {
+      if (!acc[comment.post_id]) acc[comment.post_id] = [];
+      acc[comment.post_id].push(comment);
     }
-    doc.comments.push({
-      _id: `comment_${Date.now()}`,
-      text: `Commentaire ${Math.random().toFixed(2)}`
-    });
-    return storage.value.put(doc);
-  }).then(() => fetchData());
-};
-
-const deleteComment = (post: Post, commentId: string) => {
-  storage.value.get(post._id).then((doc: any) => {
-    doc.comments = doc.comments.filter((c: Comment) => c._id !== commentId);
-    return storage.value.put(doc);
-  }).then(() => fetchData());
+    return acc;
+  }, {});
 };
 
 const fetchData = () => {
-  if(searchQuery.value === "") {
-      storage.value.allDocs({ include_docs: true }).then((result: any) => {
-      postsData.value = result.rows.map((row: any) => row.doc);
-      
-    });
-  } else {
+  if (searchQuery.value) {
     searchAndSort();
+  } else {
+    fetchPosts();
+    fetchComments();
   }
 };
 
-onMounted(() => {
-  initDatabase();
-  fetchData();
-});
+onMounted(initDatabase);
 </script>
 
 <template>
@@ -190,13 +247,17 @@ onMounted(() => {
     <h1 style="color: white;">InfraDon2</h1>
 
     <div>
-      <button @click="toggleOffline">{{ isOffline ? "Passer Online" : "Passer Offline" }}</button>
+      <button @click="toggleOffline" :style="{ 
+        backgroundColor: isOffline ? '#fecaca' : '#bbf7d0',
+        fontWeight: 'bold'
+      }">
+        {{ isOffline ? "🔴 OFFLINE" : "🟢 ONLINE" }}
+      </button>
       <button @click="runFactory">Lancer Factory</button>
       <button @click="sortByLikes">Trier par likes</button>
-
     </div>
 
-    <hr/>
+    <hr />
 
     <div>
       <input v-model="searchQuery" placeholder="Rechercher un post..." />
@@ -205,31 +266,29 @@ onMounted(() => {
 
     <button @click="addPost">Ajouter un post</button>
 
-    <h2>Posts</h2>
+    <h2 style="color: white;">Posts ({{ postsData.length }})</h2>
     <article v-for="post in postsData" :key="post._id">
       <h3>{{ post.post_name }} (Likes: {{ post.likes }})</h3>
       <p>{{ post.post_content }}</p>
-      
+
       <button @click="likePost(post)">Like</button>
       <button @click="updatePost(post)">Modifier</button>
       <button @click="deletePost(post)">Supprimer</button>
       <button @click="addComment(post)">Ajouter Commentaire</button>
 
-      
-      <div v-if="post.comments && post.comments.length > 0">
-        <h4>Commentaires:</h4>
-        <div v-for="comment in post.comments" :key="comment._id">
-          <p>{{ comment.text }}</p>
-          <button @click="deleteComment(post, comment._id!)">Supprimer Commentaire</button>
-        </div>
+      <h4>Commentaires:</h4>
+
+      <div v-for="comment in commentsData[post._id!]" :key="comment._id">
+        <p>{{ comment.text }}</p>
+        <button @click="deleteComment(comment)">Supprimer Commentaire</button>
       </div>
+
     </article>
-    
-     </div>
+  </div>
 </template>
 
 <style scoped>
-/* --- Configuration Générale --- */
+
 div {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   color: #374151;
@@ -239,15 +298,32 @@ div {
   padding: 2rem;
 }
 
-h1, h2, h3, h4 {
+h1,
+h2,
+h3,
+h4 {
   color: #111827;
   font-weight: 600;
   margin-bottom: 1rem;
 }
 
-h1 { font-size: 2rem; text-align: center; margin-bottom: 2rem; }
-h2 { font-size: 1.5rem; margin-top: 2rem; border-bottom: 2px solid #f3f4f6; padding-bottom: 0.5rem; }
-h3 { font-size: 1.25rem; margin: 0; }
+h1 {
+  font-size: 2rem;
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+h2 {
+  font-size: 1.5rem;
+  margin-top: 2rem;
+  border-bottom: 2px solid #f3f4f6;
+  padding-bottom: 0.5rem;
+}
+
+h3 {
+  font-size: 1.25rem;
+  margin: 0;
+}
 
 hr {
   border: 0;
@@ -302,12 +378,12 @@ article {
   border-radius: 8px;
   padding: 1.5rem;
   margin-bottom: 1.5rem;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   transition: transform 0.2s, box-shadow 0.2s;
 }
 
 article:hover {
-  box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
 }
 
 article p {
@@ -324,14 +400,14 @@ h4 {
   color: #9ca3af;
 }
 
-article > div {
+article>div {
   background-color: #f9fafb;
   border-radius: 6px;
   padding: 1rem;
   margin-top: 1rem;
 }
 
-article > div > div {
+article>div>div {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -339,16 +415,16 @@ article > div > div {
   padding: 0.5rem 0;
 }
 
-article > div > div:last-child {
+article>div>div:last-child {
   border-bottom: none;
 }
 
-article > div p {
+article>div p {
   margin: 0;
   font-size: 0.9rem;
 }
 
-div > div {
+div>div {
   margin-bottom: 1rem;
 }
 </style>
