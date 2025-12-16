@@ -148,12 +148,19 @@ const searchAndSort = async () => {
     fetchPosts();
     return;
   }
-  const result = await postsDB.value.allDocs({ include_docs: true });
-  postsData.value = result.rows
-    .map((row: any) => row.doc)
-    .filter((doc: Post) => doc.post_name?.toLowerCase().includes(searchQuery.value.toLowerCase()))
-    .sort((a: Post, b: Post) => b.likes - a.likes);
-  fetchComments();
+
+  try {
+    const result = await postsDB.value.find({
+      selector: {
+        post_name: { $regex: new RegExp(searchQuery.value, "i") }
+      }
+    });
+
+    postsData.value = result.docs;
+    fetchComments();
+  } catch (err) {
+    console.error("Erreur de recherche DB:", err);
+  }
 };
 
 const addPost = async () => {
@@ -189,11 +196,24 @@ const likePost = async (post: Post) => {
 };
 
 const sortByLikes = async () => {
-  const result = await postsDB.value.find({
-    selector: { likes: { $gte: 0 } },
-    sort: [{ 'likes': 'desc' }]
-  });
-  postsData.value = result.docs;
+  try {
+    const selector: any = { 
+      likes: { $gte: 0 } 
+    };
+
+    if (searchQuery.value) {
+      selector.post_name = { $regex: new RegExp(searchQuery.value, "i") };
+    }
+
+    const result = await postsDB.value.find({
+      selector: selector,
+      sort: [{ 'likes': 'desc' }] 
+    });
+    
+    postsData.value = result.docs;
+  } catch (err) {
+    console.error("Erreur lors du tri DB:", err);
+  }
 };
 
 const addComment = async (post: Post) => {
@@ -211,11 +231,8 @@ const deleteComment = async (comment: Comment) => {
 };
 
 const fetchPosts = async () => {
-  const result = await postsDB.value.find({
-    selector: { likes: { $gte: 0 } },
-    sort: [{ 'likes': 'desc' }]
-  });
-  postsData.value = result.docs;
+  const result = await postsDB.value.allDocs({ include_docs: true });
+  postsData.value = result.rows.map((row: any) => row.doc);
 };
 
 const fetchComments = async () => {
