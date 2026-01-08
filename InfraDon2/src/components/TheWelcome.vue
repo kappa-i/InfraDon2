@@ -58,7 +58,7 @@ const toggleOffline = () => {
   isOffline.value = !isOffline.value;
 
   if (isOffline.value) {
-    
+
     postsSyncHandler.value?.cancel();
     commentsSyncHandler.value?.cancel();
 
@@ -68,7 +68,7 @@ const toggleOffline = () => {
     console.log("🔴 OFFLINE : Synchronisation coupée");
   } else {
     console.log("🟢 ONLINE : Tentative de reconnexion...");
-    initRemoteDBs(); 
+    initRemoteDBs();
     syncToServer();
   }
 };
@@ -82,17 +82,17 @@ const syncToServer = async () => {
 
   try {
     console.log("⏳ Synchronisation ponctuelle en cours...");
-    
+
     await postsDB.value.replicate.to(remotePostsDB.value);
     await commentsDB.value.replicate.to(remoteCommentsDB.value);
-    
+
     await postsDB.value.replicate.from(remotePostsDB.value);
     await commentsDB.value.replicate.from(remoteCommentsDB.value);
-    
+
     console.log("✅ Synchronisation ponctuelle terminée");
-    
+
     startContinuousSync();
-    
+
     fetchData();
   } catch (err) {
     console.error("❌ Erreur de synchronisation:", err);
@@ -110,18 +110,18 @@ const startContinuousSync = () => {
     retry: true
   }).on('change', () => {
 
-    fetchData(); 
+    fetchData();
   }).on('error', (err: any) => {
-      console.error("Erreur Sync Live:", err);
+    console.error("Erreur Sync Live:", err);
   });
 
   commentsSyncHandler.value = commentsDB.value.sync(remoteCommentsDB.value, {
     live: true,
     retry: true
   }).on('change', () => {
-      fetchComments();
+    fetchComments();
   });
-  
+
 };
 
 const initDatabase = async () => {
@@ -135,7 +135,7 @@ const initDatabase = async () => {
 
   if (!isOffline.value) {
     initRemoteDBs();
-    startContinuousSync(); 
+    startContinuousSync();
   }
 
   fetchData();
@@ -205,8 +205,8 @@ const likePost = async (post: Post) => {
 
 const sortByLikes = async () => {
   try {
-    const selector: any = { 
-      likes: { $gte: 0 } 
+    const selector: any = {
+      likes: { $gte: 0 }
     };
 
     if (searchQuery.value) {
@@ -215,9 +215,9 @@ const sortByLikes = async () => {
 
     const result = await postsDB.value.find({
       selector: selector,
-      sort: [{ 'likes': 'desc' }] 
+      sort: [{ 'likes': 'desc' }]
     });
-    
+
     postsData.value = result.docs;
   } catch (err) {
     console.error("Erreur lors du tri DB:", err);
@@ -227,7 +227,7 @@ const sortByLikes = async () => {
 const addComment = async (post: Post) => {
   await commentsDB.value.post({
     post_id: post._id!,
-    text: `Commentaire ${(Math.random()*1000).toFixed()}`,
+    text: `Commentaire ${(Math.random() * 1000).toFixed()}`,
     created_at: new Date().toISOString()
   });
   fetchComments();
@@ -310,7 +310,7 @@ onMounted(initDatabase);
     <h1 style="color: white;">InfraDon2</h1>
 
     <div>
-      <button @click="toggleOffline" :style="{ 
+      <button @click="toggleOffline" :style="{
         backgroundColor: isOffline ? '#fecaca' : '#bbf7d0',
         fontWeight: 'bold'
       }">
@@ -342,31 +342,27 @@ onMounted(initDatabase);
       <!-- 🆕 SECTION ATTACHMENTS -->
       <div style="margin-top: 1rem; padding: 1rem; background: #f0f9ff; border-radius: 8px;">
         <h4 style="margin-top: 0;">📎 Fichiers</h4>
-        
-        <input
-          type="file"
-          :id="`file-${post._id}`"
-          @change="addAttachment(post, $event)"
-          accept="image/*"
-          style="display: none"
-        />
-        <label :for="`file-${post._id}`" style="cursor: pointer; padding: 0.5rem 1rem; background: #3b82f6; color: white; border-radius: 6px; display: inline-block;">
+
+        <input type="file" :id="`file-${post._id}`" @change="addAttachment(post, $event)" accept="image/*"
+          style="display: none" />
+        <label :for="`file-${post._id}`"
+          style="cursor: pointer; padding: 0.5rem 1rem; background: #3b82f6; color: white; border-radius: 6px; display: inline-block;">
           📤 Ajouter
         </label>
 
         <div v-if="post._attachments && Object.keys(post._attachments).length > 0">
-          <div v-for="(attachment, filename) in post._attachments" :key="filename" style="margin-top: 0.5rem; padding: 0.5rem; background: white; border-radius: 4px;">
+          <div v-for="(attachment, filename) in post._attachments" :key="filename"
+            style="margin-top: 0.5rem; padding: 0.5rem; background: white; border-radius: 4px;">
             <span>📄 {{ filename }}</span>
-            <span style="color: #666; margin-left: 0.5rem;">({{ ((attachment.length || 0) / 1024).toFixed(2) }} KB)</span>
-            
-            <AttachmentPreview
-              v-if="attachment.content_type?.startsWith('image/')"
-              :post="post"
-              :filename="filename as string"
-              :getAttachmentURL="getAttachmentURL"
-            />
-            
-            <button @click="deleteAttachment(post, filename as string)" style="background: #ef4444; margin-left: 0.5rem;">
+            <span style="color: #666; margin-left: 0.5rem;">({{ ((attachment.length || 0) / 1024).toFixed(2) }}
+              KB)</span>
+
+            <!-- ✅ APRÈS (correct) -->
+            <AttachmentPreview v-if="attachment.content_type?.startsWith('image/')" :post="post"
+              :filename="filename as string" :postsDB="postsDB.value" />
+
+            <button @click="deleteAttachment(post, filename as string)"
+              style="background: #ef4444; margin-left: 0.5rem;">
               🗑️
             </button>
           </div>
@@ -386,27 +382,43 @@ onMounted(initDatabase);
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, onMounted, onBeforeUnmount, type PropType } from 'vue';
+import { defineComponent, ref, onMounted, onBeforeUnmount, type PropType, watch } from 'vue';
 
 export const AttachmentPreview = defineComponent({
   props: {
     post: { type: Object as PropType<Post>, required: true },
     filename: { type: String, required: true },
-    postsDB: { type: Object, required: true }  // ← Passe la DB au lieu de la fonction
+    postsDB: { type: Object, required: false, default: null }  // ← Changé en "required: false"
   },
   setup(props) {
     const imageURL = ref<string | null>(null);
     const isLoading = ref(true);
 
-    onMounted(async () => {
+    const loadImage = async () => {
+      // ✅ Vérifier que postsDB existe avant de charger
+      if (!props.postsDB) {
+        isLoading.value = false;
+        return;
+      }
+
       try {
-        // Récupère directement l'attachment ici
         const blob = await props.postsDB.getAttachment(props.post._id!, props.filename);
         imageURL.value = URL.createObjectURL(blob as Blob);
       } catch (err) {
         console.error('❌ Erreur chargement image:', err);
       } finally {
         isLoading.value = false;
+      }
+    };
+
+    onMounted(() => {
+      loadImage();
+    });
+
+    // ✅ Recharger si postsDB devient disponible
+    watch(() => props.postsDB, (newVal) => {
+      if (newVal && !imageURL.value) {
+        loadImage();
       }
     });
 
@@ -422,13 +434,13 @@ export const AttachmentPreview = defineComponent({
     <div style="margin: 0.5rem 0;">
       <div v-if="isLoading">⏳</div>
       <img v-else-if="imageURL" :src="imageURL" alt="Preview" style="max-width: 100%; max-height: 200px; border-radius: 6px;" />
+      <div v-else style="color: #999;">Image non disponible</div>
     </div>
   `
 });
 </script>
 
 <style scoped>
-
 div {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   color: #374151;
