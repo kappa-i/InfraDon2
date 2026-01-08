@@ -382,7 +382,7 @@ onMounted(initDatabase);
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, onMounted, onBeforeUnmount, type PropType, watch } from 'vue';
+import { defineComponent, onBeforeUnmount, type PropType, watch } from 'vue';
 
 export const AttachmentPreview = defineComponent({
   props: {
