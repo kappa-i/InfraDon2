@@ -19,6 +19,14 @@ interface Post {
   post_name: string;
   post_content: string;
   likes: number;
+  _attachments?: {
+    [filename: string]: {
+      content_type: string;
+      data?: string | Blob;
+      length?: number;
+      stub?: boolean;
+    }
+  }
 }
 
 const postsDB = ref();
@@ -256,6 +264,44 @@ const fetchData = () => {
   }
 };
 
+// 🆕 FONCTIONS ATTACHMENTS
+const addAttachment = async (post: Post, event: Event) => {
+  const input = event.target as HTMLInputElement;
+  if (!input.files || input.files.length === 0) return;
+
+  const file = input.files[0];
+
+  try {
+    const doc = await postsDB.value.get(post._id!);
+    await postsDB.value.putAttachment(doc._id, file.name, doc._rev, file, file.type);
+    console.log(`✅ Attachment "${file.name}" ajouté`);
+    fetchData();
+  } catch (err) {
+    console.error('❌ Erreur ajout attachment:', err);
+  }
+};
+
+const deleteAttachment = async (post: Post, filename: string) => {
+  try {
+    const doc = await postsDB.value.get(post._id!);
+    await postsDB.value.removeAttachment(doc._id, filename, doc._rev);
+    console.log(`🗑️ Attachment "${filename}" supprimé`);
+    fetchData();
+  } catch (err) {
+    console.error('❌ Erreur suppression attachment:', err);
+  }
+};
+
+const getAttachmentURL = async (post: Post, filename: string): Promise<string | null> => {
+  try {
+    const blob = await postsDB.value.getAttachment(post._id!, filename);
+    return URL.createObjectURL(blob as Blob);
+  } catch (err) {
+    console.error('❌ Erreur récupération attachment:', err);
+    return null;
+  }
+};
+
 onMounted(initDatabase);
 </script>
 
@@ -293,6 +339,41 @@ onMounted(initDatabase);
       <button @click="deletePost(post)">Supprimer</button>
       <button @click="addComment(post)">Ajouter Commentaire</button>
 
+      <!-- 🆕 SECTION ATTACHMENTS -->
+      <div style="margin-top: 1rem; padding: 1rem; background: #f0f9ff; border-radius: 8px;">
+        <h4 style="margin-top: 0;">📎 Fichiers</h4>
+        
+        <input
+          type="file"
+          :id="`file-${post._id}`"
+          @change="addAttachment(post, $event)"
+          accept="image/*"
+          style="display: none"
+        />
+        <label :for="`file-${post._id}`" style="cursor: pointer; padding: 0.5rem 1rem; background: #3b82f6; color: white; border-radius: 6px; display: inline-block;">
+          📤 Ajouter
+        </label>
+
+        <div v-if="post._attachments && Object.keys(post._attachments).length > 0">
+          <div v-for="(attachment, filename) in post._attachments" :key="filename" style="margin-top: 0.5rem; padding: 0.5rem; background: white; border-radius: 4px;">
+            <span>📄 {{ filename }}</span>
+            <span style="color: #666; margin-left: 0.5rem;">({{ ((attachment.length || 0) / 1024).toFixed(2) }} KB)</span>
+            
+            <AttachmentPreview
+              v-if="attachment.content_type?.startsWith('image/')"
+              :post="post"
+              :filename="filename as string"
+              :getAttachmentURL="getAttachmentURL"
+            />
+            
+            <button @click="deleteAttachment(post, filename as string)" style="background: #ef4444; margin-left: 0.5rem;">
+              🗑️
+            </button>
+          </div>
+        </div>
+        <p v-else style="color: #999; font-style: italic;">Aucun fichier</p>
+      </div>
+
       <h4>Commentaires:</h4>
 
       <div v-for="comment in commentsData[post._id!]" :key="comment._id">
@@ -303,6 +384,48 @@ onMounted(initDatabase);
     </article>
   </div>
 </template>
+
+<script lang="ts">
+import { defineComponent, ref, onMounted, onBeforeUnmount, type PropType } from 'vue';
+
+export const AttachmentPreview = defineComponent({
+  props: {
+    post: { type: Object as PropType<Post>, required: true },
+    filename: { type: String, required: true },
+    postsDB: { type: Object, required: true }  // ← Passe la DB au lieu de la fonction
+  },
+  setup(props) {
+    const imageURL = ref<string | null>(null);
+    const isLoading = ref(true);
+
+    onMounted(async () => {
+      try {
+        // Récupère directement l'attachment ici
+        const blob = await props.postsDB.getAttachment(props.post._id!, props.filename);
+        imageURL.value = URL.createObjectURL(blob as Blob);
+      } catch (err) {
+        console.error('❌ Erreur chargement image:', err);
+      } finally {
+        isLoading.value = false;
+      }
+    });
+
+    onBeforeUnmount(() => {
+      if (imageURL.value) {
+        URL.revokeObjectURL(imageURL.value);
+      }
+    });
+
+    return { imageURL, isLoading };
+  },
+  template: `
+    <div style="margin: 0.5rem 0;">
+      <div v-if="isLoading">⏳</div>
+      <img v-else-if="imageURL" :src="imageURL" alt="Preview" style="max-width: 100%; max-height: 200px; border-radius: 6px;" />
+    </div>
+  `
+});
+</script>
 
 <style scoped>
 
